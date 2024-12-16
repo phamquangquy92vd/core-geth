@@ -18,7 +18,6 @@
 package ethconfig
 
 import (
-	"math/big"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -31,7 +30,8 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/consensus/lyra2"
-	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
+	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -53,16 +53,6 @@ var FullNodeGPO = gasprice.Config{
 	IgnorePrice:      gasprice.DefaultIgnorePrice,
 }
 
-// LightClientGPO contains default gasprice oracle settings for light client.
-var LightClientGPO = gasprice.Config{
-	Blocks:           2,
-	Percentile:       60,
-	MaxHeaderHistory: 300,
-	MaxBlockHistory:  5,
-	MaxPrice:         gasprice.DefaultMaxPrice,
-	IgnorePrice:      gasprice.DefaultIgnorePrice,
-}
-
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
 	SyncMode: downloader.SnapSync,
@@ -75,28 +65,26 @@ var Defaults = Config{
 		DatasetsOnDisk:   2,
 		DatasetsLockMmap: false,
 	},
-	NetworkId:               vars.DefaultNetworkID,
-	ProtocolVersions:        vars.DefaultProtocolVersions,
-	TxLookupLimit:           2350000,
-	LightPeers:              100,
-	UltraLightFraction:      75,
-	DatabaseCache:           512,
-	TrieCleanCache:          154,
-	TrieCleanCacheJournal:   "triecache",
-	TrieCleanCacheRejournal: 60 * time.Minute,
-	TrieDirtyCache:          256,
-	TrieTimeout:             60 * time.Minute,
-	SnapshotCache:           102,
-	Miner: miner.Config{
-		GasCeil:  30000000,
-		GasPrice: big.NewInt(vars.GWei),
-		Recommit: 3 * time.Second,
-	},
-	TxPool:        core.DefaultTxPoolConfig,
-	RPCGasCap:     50000000,
-	RPCEVMTimeout: 5 * time.Second,
-	GPO:           FullNodeGPO,
-	RPCTxFeeCap:   1, // 1 ether
+	NetworkId:          0, // enable auto configuration of networkID == chainID
+	ProtocolVersions:   vars.DefaultProtocolVersions,
+	TxLookupLimit:      2350000,
+	TransactionHistory: 2350000,
+	StateHistory:       vars.FullImmutabilityThreshold,
+	LightPeers:         100,
+	UltraLightFraction: 75,
+	DatabaseCache:      512,
+	TrieCleanCache:     154,
+	TrieDirtyCache:     256,
+	TrieTimeout:        60 * time.Minute,
+	SnapshotCache:      102,
+	FilterLogCacheSize: 32,
+	Miner:              miner.DefaultConfig,
+	TxPool:             legacypool.DefaultConfig,
+	BlobPool:           blobpool.DefaultConfig,
+	RPCGasCap:          50000000,
+	RPCEVMTimeout:      5 * time.Second,
+	GPO:                FullNodeGPO,
+	RPCTxFeeCap:        1, // 1 ether
 }
 
 func init() {
@@ -122,14 +110,14 @@ func init() {
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
 
-// Config contains configuration options for of the ETH and LES protocols.
+// Config contains configuration options for ETH and LES protocols.
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
 	// If nil, the Ethereum main net block is used.
 	Genesis *genesisT.Genesis `toml:",omitempty"`
 
 	// Protocol options
-	NetworkId        uint64 // Network ID to use for selecting peers to connect to
+	NetworkId        uint64 // Network ID to use for selecting peers to connect to. When 0, chainID is used.
 	ProtocolVersions []uint // Protocol versions are the supported versions of the eth protocol (first is primary).
 	SyncMode         downloader.SyncMode
 
@@ -141,7 +129,15 @@ type Config struct {
 	NoPruning  bool // Whether to disable pruning and flush everything to disk
 	NoPrefetch bool // Whether to disable prefetching and only load state on demand
 
-	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+	// Deprecated, use 'TransactionHistory' instead.
+	TxLookupLimit      uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+	TransactionHistory uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+	StateHistory       uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
+
+	// State scheme represents the scheme used to store ethereum states and trie
+	// nodes on top. It can be 'hash', 'path', or none which means use the scheme
+	// consistent with persistent state.
+	StateScheme string `toml:",omitempty"`
 
 	// RequiredBlocks is a set of block number -> hash mappings which must be in the
 	// canonical chain of all remote peers. Setting the option makes geth verify the
@@ -169,13 +165,14 @@ type Config struct {
 	DatabaseFreezer       string
 	DatabaseFreezerRemote string
 
-	TrieCleanCache          int
-	TrieCleanCacheJournal   string        `toml:",omitempty"` // Disk journal directory for trie cache to survive node restarts
-	TrieCleanCacheRejournal time.Duration `toml:",omitempty"` // Time interval to regenerate the journal for clean cache
-	TrieDirtyCache          int
-	TrieTimeout             time.Duration
-	SnapshotCache           int
-	Preimages               bool
+	TrieCleanCache int
+	TrieDirtyCache int
+	TrieTimeout    time.Duration
+	SnapshotCache  int
+	Preimages      bool
+
+	// This is the number of blocks for which logs will be cached in the filter system.
+	FilterLogCacheSize int
 
 	// Mining options
 	Miner miner.Config
@@ -184,7 +181,8 @@ type Config struct {
 	Ethash ethash.Config
 
 	// Transaction pool options
-	TxPool core.TxPoolConfig
+	TxPool   legacypool.Config
+	BlobPool blobpool.Config
 
 	// Gas Price Oracle options
 	GPO gasprice.Config
@@ -208,7 +206,7 @@ type Config struct {
 	RPCEVMTimeout time.Duration
 
 	// RPCTxFeeCap is the global transaction fee(price * gaslimit) cap for
-	// send-transction variants. The unit is ether.
+	// send-transaction variants. The unit is ether.
 	RPCTxFeeCap float64
 
 	// Checkpoint is a hardcoded checkpoint which can be nil.
@@ -218,36 +216,34 @@ type Config struct {
 	CheckpointOracle *ctypes.CheckpointOracleConfig `toml:",omitempty"`
 
 	// Manual configuration field for ECBP1100 activation number. Used for modifying genesis config via CLI flag.
-	ECBP1100 *big.Int
+	OverrideECBP1100 *uint64 `toml:",omitempty"`
+	// Manual configuration field for ECBP1100's disablement block number. Used for modifying genesis config via CLI flag.
+	OverrideECBP1100Deactivate *uint64 `toml:",omitempty"`
 
 	// ECBP1100NoDisable overrides
 	// When this value is *true, ECBP100 will not (ever) be disabled; when *false, it will never be enabled.
 	ECBP1100NoDisable *bool `toml:",omitempty"`
 
-	// Mystique block override (TODO: remove after the fork)
-	OverrideMystique *big.Int `toml:",omitempty"`
+	// OverrideShanghai (TODO: remove after the fork)
+	OverrideShanghai *uint64 `toml:",omitempty"`
 
-	// Gray Glacier block override (TODO: remove after the fork)
-	OverrideGrayGlacier *big.Int `toml:",omitempty"`
+	// OverrideCancun (TODO: remove after the fork)
+	OverrideCancun *uint64 `toml:",omitempty"`
 
-	// OverrideTerminalTotalDifficulty (TODO: remove after the fork)
-	OverrideTerminalTotalDifficulty *big.Int `toml:",omitempty"`
+	// OverrideVerkle (TODO: remove after the fork)
+	OverrideVerkle *uint64 `toml:",omitempty"`
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain configuration.
-func CreateConsensusEngine(stack *node.Node, chainConfig ctypes.ChainConfigurator, config *ethash.Config, notify []string, noverify bool, db ethdb.Database) consensus.Engine {
+func CreateConsensusEngine(stack *node.Node, ethashConfig *ethash.Config, cliqueConfig *ctypes.CliqueConfig, lyra2Config *lyra2.Config, notify []string, noverify bool, db ethdb.Database) consensus.Engine {
 	// If proof-of-authority is requested, set it up
 	var engine consensus.Engine
-	if chainConfig.GetConsensusEngineType().IsClique() {
-		engine = clique.New(&ctypes.CliqueConfig{
-			Period: chainConfig.GetCliquePeriod(),
-			Epoch:  chainConfig.GetCliqueEpoch(),
-		}, db)
-	} else if chainConfig.GetConsensusEngineType().IsLyra2() {
-		engine = lyra2.New(notify, noverify)
+	if cliqueConfig != nil {
+		engine = clique.New(cliqueConfig, db)
+	} else if lyra2Config != nil {
+		engine = lyra2.New(lyra2Config, notify, noverify)
 	} else {
-		// Otherwise assume proof-of-work
-		switch config.PowMode {
+		switch ethashConfig.PowMode {
 		case ethash.ModeFake:
 			log.Warn("Ethash used in fake mode")
 			engine = ethash.NewFaker()
@@ -262,17 +258,17 @@ func CreateConsensusEngine(stack *node.Node, chainConfig ctypes.ChainConfigurato
 			engine = ethash.NewPoissonFaker()
 		default:
 			engine = ethash.New(ethash.Config{
-				PowMode:          config.PowMode,
-				CacheDir:         stack.ResolvePath(config.CacheDir),
-				CachesInMem:      config.CachesInMem,
-				CachesOnDisk:     config.CachesOnDisk,
-				CachesLockMmap:   config.CachesLockMmap,
-				DatasetDir:       config.DatasetDir,
-				DatasetsInMem:    config.DatasetsInMem,
-				DatasetsOnDisk:   config.DatasetsOnDisk,
-				DatasetsLockMmap: config.DatasetsLockMmap,
-				NotifyFull:       config.NotifyFull,
-				ECIP1099Block:    chainConfig.GetEthashECIP1099Transition(),
+				PowMode:          ethashConfig.PowMode,
+				CacheDir:         stack.ResolvePath(ethashConfig.CacheDir),
+				CachesInMem:      ethashConfig.CachesInMem,
+				CachesOnDisk:     ethashConfig.CachesOnDisk,
+				CachesLockMmap:   ethashConfig.CachesLockMmap,
+				DatasetDir:       ethashConfig.DatasetDir,
+				DatasetsInMem:    ethashConfig.DatasetsInMem,
+				DatasetsOnDisk:   ethashConfig.DatasetsOnDisk,
+				DatasetsLockMmap: ethashConfig.DatasetsLockMmap,
+				NotifyFull:       ethashConfig.NotifyFull,
+				ECIP1099Block:    ethashConfig.ECIP1099Block,
 			}, notify, noverify)
 			engine.(*ethash.Ethash).SetThreads(-1) // Disable CPU mining
 		}

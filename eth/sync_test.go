@@ -18,7 +18,6 @@ package eth
 
 import (
 	"math/big"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/params/types/genesisT"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 // blockGenContemporaryTime creates a block gen function that will bump the block times to within throwing
@@ -61,9 +61,9 @@ func newTestHandlerWithBlocksWithOpts(blocks int, mode downloader.SyncMode, gen 
 		Config: params.TestChainConfig,
 		Alloc:  genesisT.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
 	}
-	core.MustCommitGenesis(db, gspec)
+	core.MustCommitGenesis(db, triedb.NewDatabase(db, nil), gspec)
 
-	chain, _ := core.NewBlockChain(db, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
+	chain, _ := core.NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 
 	bs, _ := core.GenerateChain(params.TestChainConfig, chain.Genesis(), ethash.NewFaker(), db, blocks, gen)
 	if _, err := chain.InsertChain(bs); err != nil {
@@ -91,8 +91,7 @@ func newTestHandlerWithBlocksWithOpts(blocks int, mode downloader.SyncMode, gen 
 }
 
 // Tests that snap sync is disabled after a successful sync cycle.
-func TestSnapSyncDisabling66(t *testing.T) { testSnapSyncDisabling(t, eth.ETH66, snap.SNAP1) }
-func TestSnapSyncDisabling67(t *testing.T) { testSnapSyncDisabling(t, eth.ETH67, snap.SNAP1) }
+func TestSnapSyncDisabling68(t *testing.T) { testSnapSyncDisabling(t, eth.ETH68, snap.SNAP1) }
 
 // Tests that snap sync gets disabled as soon as a real block is successfully
 // imported into the blockchain.
@@ -101,14 +100,14 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 
 	// Create an empty handler and ensure it's in snap sync mode
 	empty := newTestHandler()
-	if atomic.LoadUint32(&empty.handler.snapSync) == 0 {
+	if !empty.handler.snapSync.Load() {
 		t.Fatalf("snap sync disabled on pristine blockchain")
 	}
 	defer empty.close()
 
 	// Create a full handler and ensure snap sync ends up disabled
 	full := newTestHandlerWithBlocks(1024)
-	if atomic.LoadUint32(&full.handler.snapSync) == 1 {
+	if full.handler.snapSync.Load() {
 		t.Fatalf("snap sync not disabled on non-empty blockchain")
 	}
 	defer full.close()
@@ -153,7 +152,7 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	if err := empty.handler.doSync(op); err != nil {
 		t.Fatal("sync failed:", err)
 	}
-	if atomic.LoadUint32(&empty.handler.snapSync) == 1 {
+	if empty.handler.snapSync.Load() {
 		t.Fatalf("snap sync not disabled after successful synchronisation")
 	}
 }
@@ -164,7 +163,7 @@ func TestArtificialFinalityFeatureEnablingDisabling(t *testing.T) {
 
 	// Create a full protocol manager, check that fast sync gets disabled
 	a := newTestHandlerWithBlocksWithOpts(1024, downloader.FullSync, genFunc)
-	if atomic.LoadUint32(&a.handler.snapSync) == 1 {
+	if a.handler.snapSync.Load() {
 		t.Fatalf("snap sync not disabled on non-empty blockchain")
 	}
 	defer a.close()
@@ -181,7 +180,7 @@ func TestArtificialFinalityFeatureEnablingDisabling(t *testing.T) {
 
 	// Create a full protocol manager, check that fast sync gets disabled
 	b := newTestHandlerWithBlocksWithOpts(0, downloader.FullSync, genFunc)
-	if atomic.LoadUint32(&b.handler.snapSync) == 1 {
+	if b.handler.snapSync.Load() {
 		t.Fatalf("snap sync not disabled on non-empty blockchain")
 	}
 	defer b.close()
@@ -217,7 +216,7 @@ func TestArtificialFinalityFeatureEnablingDisabling(t *testing.T) {
 	if next != nil {
 		t.Fatal("non-nil next sync op")
 	}
-	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number()) {
+	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number) {
 		t.Error("AF feature not configured")
 	}
 	if !b.chain.IsArtificialFinalityEnabled() {
@@ -302,7 +301,7 @@ func TestArtificialFinalityFeatureEnablingDisabling_NoDisable(t *testing.T) {
 	if next != nil {
 		t.Fatal("non-nil next sync op")
 	}
-	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number()) {
+	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number) {
 		t.Error("AF feature not configured")
 	}
 	if !b.chain.IsArtificialFinalityEnabled() {
@@ -382,7 +381,7 @@ func TestArtificialFinalityFeatureEnablingDisabling_StaleHead(t *testing.T) {
 	if next != nil {
 		t.Fatal("non-nil next sync op")
 	}
-	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number()) {
+	if !b.chain.Config().IsEnabled(b.chain.Config().GetECBP1100Transition, b.chain.CurrentBlock().Number) {
 		t.Error("AF feature not configured")
 	}
 	// Unit test the timestamp. We want to be sure that the blockchain's current header is actually very old

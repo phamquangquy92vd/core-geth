@@ -27,16 +27,15 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/exp/slog"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/log"
 )
 
 func verboseLogging() {
-	glogger := log.NewGlogHandler(log.StreamHandler(os.Stdout, log.TerminalFormat(false)))
-	glogger.Verbosity(log.Lvl(99))
-	log.Root().SetHandler(glogger)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
 func TestEthashECIP1099UniqueSeedHashes(t *testing.T) {
@@ -273,32 +272,26 @@ func TestCachesGet(t *testing.T) {
 		maxUint64         uint64 = math.MaxUint64
 	)
 	// test without ecip-1099 enabled
-	currentIA, futureIA := ethashA.caches.get(epoch, epochLengthDefault, &maxUint64)
-	currentA := currentIA.(*cache)
+	currentA, futureA := ethashA.caches.get(epoch, epochLengthDefault, &maxUint64)
 	if currentA.epoch != epoch {
 		t.Errorf("cache: current epoch mismatch: have %d, want %d", currentA.epoch, epoch)
 	}
-	futureA := futureIA.(*cache)
 	if futureA.epoch != nextEpochDefault {
 		t.Errorf("cache: future epoch mismatch: have %d, want %d", futureA.epoch, nextEpochDefault)
 	}
 	// test activation boundary of ecip-1099
-	currentIB, futureIB := ethashB.caches.get(epoch, epochLengthDefault, &ecip1099Block)
-	currentB := currentIB.(*cache)
+	currentB, futureB := ethashB.caches.get(epoch, epochLengthDefault, &ecip1099Block)
 	if currentB.epoch != epoch {
 		t.Errorf("cache: current epoch mismatch: have %d, want %d", currentB.epoch, epoch)
 	}
-	futureB := futureIB.(*cache)
 	if futureB.epoch != nextEpochECIP1099 {
 		t.Errorf("cache: future epoch mismatch: have %d, want %d", futureB.epoch, nextEpochECIP1099)
 	}
 	// test post ecip-1099 activation
-	currentIC, futureIC := ethashC.caches.get(nextEpochECIP1099, epochLengthECIP1099, &ecip1099Block)
-	currentC := currentIC.(*cache)
+	currentC, futureC := ethashC.caches.get(nextEpochECIP1099, epochLengthECIP1099, &ecip1099Block)
 	if currentC.epoch != nextEpochECIP1099 {
 		t.Errorf("cache: current epoch mismatch: have %d, want %d", currentC.epoch, nextEpochECIP1099)
 	}
-	futureC := futureIC.(*cache)
 	if futureC.epoch != nextEpochECIP1099+1 {
 		t.Errorf("cache: future epoch mismatch: have %d, want %d", futureC.epoch, nextEpochECIP1099+1)
 	}

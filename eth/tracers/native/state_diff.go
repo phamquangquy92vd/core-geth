@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"math/big"
 	"sync/atomic"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -32,7 +31,7 @@ import (
 )
 
 func init() {
-	register("stateDiffTracer", newStateDiffTracer)
+	tracers.DefaultDirectory.Register("stateDiffTracer", newStateDiffTracer, false)
 }
 
 type stateDiffMarker string
@@ -91,11 +90,11 @@ func (t *stateDiffTracer) CaptureTxStart(gasLimit uint64) {}
 
 func (t *stateDiffTracer) CaptureTxEnd(restGas uint64) {}
 
-func newStateDiffTracer(ctx *tracers.Context) tracers.Tracer {
+func newStateDiffTracer(ctx *tracers.Context, j json.RawMessage) (tracers.Tracer, error) {
 	// First callframe contains tx context info
 	// and is populated on start and end.
 	return &stateDiffTracer{stateDiff: stateDiff{}, ctx: ctx,
-		changedStorageKeys: make(map[common.Address]map[common.Hash]bool)}
+		changedStorageKeys: make(map[common.Address]map[common.Hash]bool)}, nil
 }
 func (t *stateDiffTracer) CapturePreEVM(env *vm.EVM) {
 	t.env = env
@@ -119,7 +118,7 @@ func (t *stateDiffTracer) CaptureStart(env *vm.EVM, from common.Address, to comm
 }
 
 // CaptureEnd is called after the call finishes to finalize the tracing.
-func (t *stateDiffTracer) CaptureEnd(output []byte, gasUsed uint64, _ time.Duration, err error) {}
+func (t *stateDiffTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {}
 
 // CaptureState implements the EVMLogger interface to trace a single step of VM execution.
 func (t *stateDiffTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
@@ -298,7 +297,7 @@ func (t *stateDiffTracer) GetResult() (json.RawMessage, error) {
 				markerBorn: hexutil.Uint64(t.env.StateDB.GetNonce(addr)),
 			}
 			accountDiff.Balance = map[stateDiffMarker]*hexutil.Big{
-				markerBorn: (*hexutil.Big)(t.env.StateDB.GetBalance(addr)),
+				markerBorn: (*hexutil.Big)(t.env.StateDB.GetBalance(addr).ToBig()),
 			}
 			accountDiff.Code = map[stateDiffMarker]hexutil.Bytes{
 				markerBorn: t.env.StateDB.GetCode(addr),
@@ -311,7 +310,7 @@ func (t *stateDiffTracer) GetResult() (json.RawMessage, error) {
 				markerDied: hexutil.Uint64(fromNonce),
 			}
 			accountDiff.Balance = map[stateDiffMarker]*hexutil.Big{
-				markerDied: (*hexutil.Big)(t.initialState.GetBalance(addr)),
+				markerDied: (*hexutil.Big)(t.initialState.GetBalance(addr).ToBig()),
 			}
 			accountDiff.Code = map[stateDiffMarker]hexutil.Bytes{
 				markerDied: t.initialState.GetCode(addr),
@@ -339,7 +338,7 @@ func (t *stateDiffTracer) GetResult() (json.RawMessage, error) {
 				accountDiff.Balance = markerSame
 			} else {
 				diff := make(map[stateDiffMarker]*StateDiffBalance)
-				diff[markerChanged] = &StateDiffBalance{From: (*hexutil.Big)(fromBalance), To: (*hexutil.Big)(toBalance)}
+				diff[markerChanged] = &StateDiffBalance{From: (*hexutil.Big)(fromBalance.ToBig()), To: (*hexutil.Big)(toBalance.ToBig())}
 				accountDiff.Balance = diff
 				allEqual = false
 			}

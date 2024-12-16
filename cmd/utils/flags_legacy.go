@@ -33,22 +33,68 @@ var ShowDeprecated = &cli.Command{
 }
 
 var DeprecatedFlags = []cli.Flag{
-	LegacyMinerGasTargetFlag,
 	NoUSBFlag,
+	LegacyWhitelistFlag,
+	CacheTrieJournalFlag,
+	CacheTrieRejournalFlag,
+	LegacyDiscoveryV5Flag,
+	TxLookupLimitFlag,
+	LightServeFlag,
+	LightIngressFlag,
+	LightEgressFlag,
+	LightMaxPeersFlag,
+	LightNoPruneFlag,
+	LightNoSyncServeFlag,
+	LogBacktraceAtFlag,
+	LogDebugFlag,
 }
 
 var (
-	// (Deprecated May 2020, shown in aliased flags section)
+	// Deprecated May 2020, shown in aliased flags section
 	NoUSBFlag = &cli.BoolFlag{
 		Name:     "nousb",
 		Usage:    "Disables monitoring for and managing USB hardware wallets (deprecated)",
 		Category: flags.DeprecatedCategory,
 	}
-	// (Deprecated July 2021, shown in aliased flags section)
-	LegacyMinerGasTargetFlag = &cli.Uint64Flag{
-		Name:     "miner.gastarget",
-		Usage:    "Target gas floor for mined blocks (deprecated)",
-		Value:    ethconfig.Defaults.Miner.GasFloor,
+	// Deprecated March 2022
+	LegacyWhitelistFlag = &cli.StringFlag{
+		Name:     "whitelist",
+		Usage:    "Comma separated block number-to-hash mappings to enforce (<number>=<hash>) (deprecated in favor of --eth.requiredblocks)",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated July 2023
+	CacheTrieJournalFlag = &cli.StringFlag{
+		Name:     "cache.trie.journal",
+		Usage:    "Disk journal directory for trie cache to survive node restarts",
+		Category: flags.DeprecatedCategory,
+	}
+	CacheTrieRejournalFlag = &cli.DurationFlag{
+		Name:     "cache.trie.rejournal",
+		Usage:    "Time interval to regenerate the trie cache journal",
+		Category: flags.DeprecatedCategory,
+	}
+	LegacyDiscoveryV5Flag = &cli.BoolFlag{
+		Name:     "v5disc",
+		Usage:    "Enables the experimental RLPx V5 (Topic Discovery) mechanism (deprecated, use --discv5 instead)",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated August 2023
+	TxLookupLimitFlag = &cli.Uint64Flag{
+		Name:     "txlookuplimit",
+		Usage:    "Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain) (deprecated, use history.transactions instead)",
+		Value:    ethconfig.Defaults.TransactionHistory,
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated November 2023
+	LogBacktraceAtFlag = &cli.StringFlag{
+		Name:     "log.backtrace",
+		Usage:    "Request a stack trace at a specific logging statement (deprecated)",
+		Value:    "",
+		Category: flags.DeprecatedCategory,
+	}
+	LogDebugFlag = &cli.BoolFlag{
+		Name:     "log.debug",
+		Usage:    "Prepends log messages with call-site location (deprecated)",
 		Category: flags.DeprecatedCategory,
 	}
 )

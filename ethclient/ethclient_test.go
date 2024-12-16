@@ -19,6 +19,7 @@ package ethclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -38,12 +39,14 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/params/types/genesisT"
 	"github.com/ethereum/go-ethereum/params/vars"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/triedb"
 	meta_schema "github.com/open-rpc/meta-schema"
 )
 
@@ -63,7 +66,7 @@ var (
 )
 
 func TestToFilterArg(t *testing.T) {
-	blockHashErr := fmt.Errorf("cannot specify both BlockHash and FromBlock/ToBlock")
+	blockHashErr := errors.New("cannot specify both BlockHash and FromBlock/ToBlock")
 	addresses := []common.Address{
 		common.HexToAddress("0xD36722ADeC3EdCB29c8e7b5a47f352D701393462"),
 	}
@@ -235,6 +238,12 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block) {
 		t.Fatalf("can't create new ethereum service: %v", err)
 	}
 	n.RegisterAPIs(tracers.APIs(ethservice.APIBackend))
+
+	filterSystem := filters.NewFilterSystem(ethservice.APIBackend, filters.Config{})
+	n.RegisterAPIs([]rpc.API{{
+		Namespace: "eth",
+		Service:   filters.NewFilterAPI(filterSystem, false),
+	}})
 	// Import the test chain.
 	if err := n.Start(); err != nil {
 		t.Fatalf("can't start test node: %v", err)
@@ -242,20 +251,18 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block) {
 	if _, err := ethservice.BlockChain().InsertChain(blocks[1:]); err != nil {
 		t.Fatalf("can't import test blocks: %v", err)
 	}
+	// Ensure the tx indexing is fully generated
+	for ; ; time.Sleep(time.Millisecond * 100) {
+		progress, err := ethservice.BlockChain().TxIndexProgress()
+		if err == nil && progress.Done() {
+			break
+		}
+	}
 	return n, blocks
 }
 
 // generateTestChain generates 2 blocks. The first block contains 2 transactions.
 func generateTestChain() []*types.Block {
-	db := rawdb.NewMemoryDatabase()
-	config := params.AllEthashProtocolChanges
-	genesis := &genesisT.Genesis{
-		Config:    config,
-		Alloc:     genesisT.GenesisAlloc{testAddr: {Balance: testBalance}},
-		ExtraData: []byte("test genesis"),
-		Timestamp: 9000,
-		BaseFee:   big.NewInt(vars.InitialBaseFee),
-	}
 	generate := func(i int, g *core.BlockGen) {
 		g.OffsetTime(5)
 		g.SetExtra([]byte("test"))
@@ -265,16 +272,15 @@ func generateTestChain() []*types.Block {
 			g.AddTx(testTx2)
 		}
 	}
-	gblock := core.GenesisToBlock(genesis, db)
-	engine := ethash.NewFaker()
-	blocks, _ := core.GenerateChain(genesis.Config, gblock, engine, db, 2, generate)
-	blocks = append([]*types.Block{gblock}, blocks...)
-	return blocks
+	_, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 2, generate)
+	mem := rawdb.NewMemoryDatabase()
+	genesisBlock := core.MustCommitGenesis(mem, triedb.NewDatabase(mem, nil), genesis)
+	return append([]*types.Block{genesisBlock}, blocks...)
 }
 
 func TestEthClient(t *testing.T) {
 	backend, chain := newTestBackend(t)
-	client, _ := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
 	defer client.Close()
 
@@ -288,7 +294,7 @@ func TestEthClient(t *testing.T) {
 			func(t *testing.T) { testBalanceAt(t, client) },
 		},
 		"TxInBlockInterrupted": {
-			func(t *testing.T) { testTransactionInBlockInterrupted(t, client) },
+			func(t *testing.T) { testTransactionInBlock(t, client) },
 		},
 		"ChainID": {
 			func(t *testing.T) { testChainID(t, client) },
@@ -353,7 +359,7 @@ func testHeader(t *testing.T, chain []*types.Block, client *rpc.Client) {
 				got.Number = big.NewInt(0) // hack to make DeepEqual work
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("HeaderByNumber(%v)\n   = %v\nwant %v", tt.block, got, tt.want)
+				t.Fatalf("HeaderByNumber(%v) got = %v, want %v", tt.block, got, tt.want)
 			}
 		})
 	}
@@ -407,7 +413,7 @@ func testBalanceAt(t *testing.T, client *rpc.Client) {
 
 func TestHeader_TxesUnclesNotEmpty(t *testing.T) {
 	backend, blocks := newTestBackend(t)
-	client, _ := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
 	defer client.Close()
 
@@ -443,7 +449,7 @@ func TestHeader_TxesUnclesNotEmpty(t *testing.T) {
 	}
 }
 
-func testTransactionInBlockInterrupted(t *testing.T, client *rpc.Client) {
+func testTransactionInBlock(t *testing.T, client *rpc.Client) {
 	ec := NewClient(client)
 
 	// Get current block by number.
@@ -452,20 +458,26 @@ func testTransactionInBlockInterrupted(t *testing.T, client *rpc.Client) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Test tx in block interupted.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	tx, err := ec.TransactionInBlock(ctx, block.Hash(), 0)
-	if tx != nil {
-		t.Fatal("transaction should be nil")
-	}
-	if err == nil || err == ethereum.NotFound {
-		t.Fatal("error should not be nil/notfound")
-	}
-
 	// Test tx in block not found.
 	if _, err := ec.TransactionInBlock(context.Background(), block.Hash(), 20); err != ethereum.NotFound {
 		t.Fatal("error should be ethereum.NotFound")
+	}
+
+	// Test tx in block found.
+	tx, err := ec.TransactionInBlock(context.Background(), block.Hash(), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tx.Hash() != testTx1.Hash() {
+		t.Fatalf("unexpected transaction: %v", tx)
+	}
+
+	tx, err = ec.TransactionInBlock(context.Background(), block.Hash(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tx.Hash() != testTx2.Hash() {
+		t.Fatalf("unexpected transaction: %v", tx)
 	}
 }
 
@@ -542,7 +554,7 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if networkID.Cmp(big.NewInt(0)) != 0 {
+	if networkID.Cmp(big.NewInt(1337)) != 0 {
 		t.Fatalf("unexpected networkID: %v", networkID)
 	}
 
@@ -562,6 +574,29 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 	}
 	if gasTipCap.Cmp(big.NewInt(234375000)) != 0 {
 		t.Fatalf("unexpected gas tip cap: %v", gasTipCap)
+	}
+
+	// FeeHistory
+	history, err := ec.FeeHistory(context.Background(), 1, big.NewInt(2), []float64{95, 99})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := &ethereum.FeeHistory{
+		OldestBlock: big.NewInt(2),
+		Reward: [][]*big.Int{
+			{
+				big.NewInt(234375000),
+				big.NewInt(234375000),
+			},
+		},
+		BaseFee: []*big.Int{
+			big.NewInt(765625000),
+			big.NewInt(671627818),
+		},
+		GasUsedRatio: []float64{0.008912678667376286},
+	}
+	if !reflect.DeepEqual(history, want) {
+		t.Fatalf("FeeHistory result doesn't match expected: (got: %v, want: %v)", history, want)
 	}
 }
 
@@ -613,7 +648,7 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	if _, err := ec.CallContract(context.Background(), msg, big.NewInt(1)); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// PendingCallCOntract
+	// PendingCallContract
 	if _, err := ec.PendingCallContract(context.Background(), msg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,6 +656,11 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 
 func testAtFunctions(t *testing.T, client *rpc.Client) {
 	ec := NewClient(client)
+
+	block, err := ec.HeaderByNumber(context.Background(), big.NewInt(1))
+	if err != nil {
+		t.Fatalf("BlockByNumber error: %v", err)
+	}
 
 	// send a transaction for some interesting pending status
 	sendTransaction(ec)
@@ -639,6 +679,13 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	hashBalance, err := ec.BalanceAtHash(context.Background(), testAddr, block.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if balance.Cmp(hashBalance) == 0 {
+		t.Fatalf("unexpected balance at hash: %v %v", balance, hashBalance)
+	}
 	penBalance, err := ec.PendingBalanceAt(context.Background(), testAddr)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -650,6 +697,13 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	nonce, err := ec.NonceAt(context.Background(), testAddr, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	hashNonce, err := ec.NonceAtHash(context.Background(), testAddr, block.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hashNonce == nonce {
+		t.Fatalf("unexpected nonce at hash: %v %v", nonce, hashNonce)
 	}
 	penNonce, err := ec.PendingNonceAt(context.Background(), testAddr)
 	if err != nil {
@@ -663,6 +717,13 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	hashStorage, err := ec.StorageAtHash(context.Background(), testAddr, common.Hash{}, block.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(storage, hashStorage) {
+		t.Fatalf("unexpected storage at hash: %v %v", storage, hashStorage)
+	}
 	penStorage, err := ec.PendingStorageAt(context.Background(), testAddr, common.Hash{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -674,6 +735,13 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	code, err := ec.CodeAt(context.Background(), testAddr, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	hashCode, err := ec.CodeAtHash(context.Background(), common.Address{}, block.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(code, hashCode) {
+		t.Fatalf("unexpected code at hash: %v %v", code, hashCode)
 	}
 	penCode, err := ec.PendingCodeAt(context.Background(), testAddr)
 	if err != nil {
@@ -705,6 +773,7 @@ func testTransactionSender(t *testing.T, client *rpc.Client) {
 	// TransactionSender. Ensure the server is not asked by canceling the context here.
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
+	<-canceledCtx.Done() // Ensure the close of the Done channel
 	sender1, err := ec.TransactionSender(canceledCtx, tx1, block2.Hash(), 0)
 	if err != nil {
 		t.Fatal(err)
@@ -748,9 +817,69 @@ func sendTransaction(ec *Client) error {
 	return ec.SendTransaction(context.Background(), tx)
 }
 
+func sliceContains(sl []string, str string) bool {
+	for _, s := range sl {
+		if str == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRPCDiscover(t *testing.T) {
+	check := func(r meta_schema.OpenrpcDocument) {
+		responseMethods := func() (names []string) {
+			for _, m := range *r.Methods {
+				names = append(names, string(*m.Name))
+			}
+			return
+		}()
+
+		over, under := []string{}, []string{}
+
+		// under: methods which exist in the response document,
+		// but are not contained in the canonical hardcoded list below
+		for _, name := range responseMethods {
+			if !sliceContains(allRPCMethods, name) {
+				under = append(under, name)
+			}
+		}
+
+		// over: methods which DO NOT exist in the response document,
+		// but ARE contained in the canonical hardcoded list below
+		for _, name := range allRPCMethods {
+			if !sliceContains(responseMethods, name) {
+				over = append(over, name)
+			}
+		}
+
+		if len(over) > 0 || len(under) > 0 {
+			printList := func(list []string) string {
+				if len(list) == 0 {
+					return "∅" // empty set
+				}
+				var str string
+				for _, s := range list {
+					str += "-" + s + "\n"
+				}
+				return str
+			}
+
+			responseDocument, _ := json.MarshalIndent(r, "", "    ")
+			t.Logf(`Response Document:
+
+%s`, string(responseDocument))
+			t.Fatalf(`OVER (methods which do not appear in the current API, but exist in the hardcoded response document):):
+%v
+
+UNDER (methods which appear in the current API, but do not appear in the hardcoded response document):):
+%v
+`, printList(over), printList(under))
+		}
+	}
+
 	backend, _ := newTestBackend(t)
-	client, _ := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
 	defer client.Close()
 
@@ -760,58 +889,7 @@ func TestRPCDiscover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sliceContains := func(sl []string, str string) bool {
-		for _, s := range sl {
-			if str == s {
-				return true
-			}
-		}
-		return false
-	}
-
-	responseMethods := func() (names []string) {
-		for _, m := range *res.Methods {
-			names = append(names, string(*m.Name))
-		}
-		return
-	}()
-
-	over, under := []string{}, []string{}
-
-	// under: methods which exist in the response document,
-	// but are not contained in the canonical hardcoded list below
-	for _, name := range responseMethods {
-		if !sliceContains(allRPCMethods, name) {
-			under = append(under, name)
-		}
-	}
-
-	// over: methods which DO NOT exist in the response document,
-	// but ARE contained in the canonical hardcoded list below
-	for _, name := range allRPCMethods {
-		if !sliceContains(responseMethods, name) {
-			over = append(over, name)
-		}
-	}
-
-	if len(over) > 0 || len(under) > 0 {
-		printList := func(list []string) string {
-			if len(list) == 0 {
-				return "∅" // empty set
-			}
-			var str string
-			for _, s := range list {
-				str += "-" + s + "\n"
-			}
-			return str
-		}
-		t.Fatalf(`OVER (methods which do not appear in the current API, but exist in the hardcoded response document):): 
-%v
-
-UNDER (methods which appear in the current API, but do not appear in the hardcoded response document):): 
-%v
-`, printList(over), printList(under))
-	}
+	check(res)
 }
 
 func subscriptionTestSetup(t *testing.T) (genesisBlock *genesisT.Genesis, backend *node.Node) {
@@ -861,6 +939,12 @@ func TestEthSubscribeNewSideHeads(t *testing.T) {
 		t.Fatalf("can't create new ethereum service: %v", err)
 	}
 
+	filterSystem := filters.NewFilterSystem(ethservice.APIBackend, filters.Config{})
+	backend.RegisterAPIs([]rpc.API{{
+		Namespace: "eth",
+		Service:   filters.NewFilterAPI(filterSystem, false),
+	}})
+
 	// Import the test chain.
 	if err := backend.Start(); err != nil {
 		t.Fatalf("can't start test node: %v", err)
@@ -870,8 +954,9 @@ func TestEthSubscribeNewSideHeads(t *testing.T) {
 	}
 
 	// Create the client and newSideHeads subscription.
-	client, err := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
+
 	defer client.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -882,9 +967,18 @@ func TestEthSubscribeNewSideHeads(t *testing.T) {
 	sideHeadCh := make(chan *types.Header)
 	sub, err := ec.SubscribeNewSideHead(context.Background(), sideHeadCh)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
+	} else {
+		defer sub.Unsubscribe()
 	}
-	defer sub.Unsubscribe()
+
+	headCh := make(chan *types.Header)
+	sub2, err2 := ec.SubscribeNewHead(context.Background(), headCh)
+	if err2 != nil {
+		t.Error(err2)
+	} else {
+		defer sub2.Unsubscribe()
+	}
 
 	// Create and import the second-seen chain.
 	replacementBlocks, _ := core.GenerateChain(chainConfig, originalBlocks[len(originalBlocks)-5], ethservice.Engine(), db, 5, func(i int, gen *core.BlockGen) {
@@ -986,7 +1080,7 @@ func mustNewTestBackend() (*node.Node, []*types.Block) {
 // BenchmarkRPC_Discover shows that rpc.discover by reflection is slow.
 func BenchmarkRPC_Discover(b *testing.B) {
 	backend, _ := mustNewTestBackend()
-	client, _ := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
 	defer client.Close()
 
@@ -1003,7 +1097,7 @@ func BenchmarkRPC_Discover(b *testing.B) {
 // BenchmarkRPC_BlockNumber shows that eth_blockNumber is a lot faster than rpc.discover.
 func BenchmarkRPC_BlockNumber(b *testing.B) {
 	backend, _ := mustNewTestBackend()
-	client, _ := backend.Attach()
+	client := backend.Attach()
 	defer backend.Close()
 	defer client.Close()
 
@@ -1068,7 +1162,6 @@ var allRPCMethods = []string{
 	"admin_stopRPC",
 	"admin_stopWS",
 	"debug_accountRange",
-	"debug_backtraceAt",
 	"debug_blockProfile",
 	"debug_chaindbCompact",
 	"debug_chaindbProperty",
@@ -1076,28 +1169,31 @@ var allRPCMethods = []string{
 	"debug_dbAncient",
 	"debug_dbAncients",
 	"debug_dbGet",
+	"debug_discoveryV4Table",
 	"debug_dumpBlock",
 	"debug_freeOSMemory",
 	"debug_gcStats",
 	"debug_getAccessibleState",
 	"debug_getBadBlocks",
-	"debug_getBlockRlp",
-	"debug_getHeaderRlp",
 	"debug_getModifiedAccountsByHash",
 	"debug_getModifiedAccountsByNumber",
+	"debug_getTrieFlushInterval",
+	"debug_getRawBlock",
+	"debug_getRawHeader",
 	"debug_getRawReceipts",
+	"debug_getRawTransaction",
 	"debug_goTrace",
 	"debug_intermediateRoots",
 	"debug_memStats",
 	"debug_mutexProfile",
 	"debug_preimage",
 	"debug_printBlock",
-	"debug_removePendingTransaction",
 	"debug_seedHash",
 	"debug_setBlockProfileRate",
 	"debug_setGCPercent",
 	"debug_setHead",
 	"debug_setMutexProfileFraction",
+	"debug_setTrieFlushInterval",
 	"debug_stacks",
 	"debug_standardTraceBadBlockToFile",
 	"debug_standardTraceBlockToFile",
@@ -1136,6 +1232,7 @@ var allRPCMethods = []string{
 	"eth_getBalance",
 	"eth_getBlockByHash",
 	"eth_getBlockByNumber",
+	"eth_getBlockReceipts",
 	"eth_getBlockTransactionCountByHash",
 	"eth_getBlockTransactionCountByNumber",
 	"eth_getCode",

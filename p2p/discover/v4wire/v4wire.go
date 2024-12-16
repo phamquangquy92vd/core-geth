@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/math"
@@ -60,7 +61,7 @@ type (
 	Pong struct {
 		// This field should mirror the UDP envelope address
 		// of the ping packet, which provides a way to discover the
-		// the external address (after NAT).
+		// external address (after NAT).
 		To         Endpoint
 		ReplyTok   []byte // This contains the hash of the ping packet.
 		Expiration uint64 // Absolute timestamp at which the packet becomes invalid.
@@ -102,7 +103,7 @@ type (
 	}
 )
 
-// This number is the maximum number of neighbor nodes in a Neighbors packet.
+// MaxNeighbors is the maximum number of neighbor nodes in a Neighbors packet.
 const MaxNeighbors = 12
 
 // This code computes the MaxNeighbors constant value.
@@ -150,19 +151,21 @@ type Endpoint struct {
 }
 
 // NewEndpoint creates an endpoint.
-func NewEndpoint(addr *net.UDPAddr, tcpPort uint16) Endpoint {
-	ip := net.IP{}
-	if ip4 := addr.IP.To4(); ip4 != nil {
-		ip = ip4
-	} else if ip6 := addr.IP.To16(); ip6 != nil {
-		ip = ip6
+func NewEndpoint(addr netip.AddrPort, tcpPort uint16) Endpoint {
+	var ip net.IP
+	if addr.Addr().Is4() || addr.Addr().Is4In6() {
+		ip4 := addr.Addr().As4()
+		ip = ip4[:]
+	} else {
+		ip = addr.Addr().AsSlice()
 	}
-	return Endpoint{IP: ip, UDP: uint16(addr.Port), TCP: tcpPort}
+	return Endpoint{IP: ip, UDP: addr.Port(), TCP: tcpPort}
 }
 
 type Packet interface {
-	// packet name and type for logging purposes.
+	// Name is the name of the package, for logging purposes.
 	Name() string
+	// Kind is the packet type, for logging purposes.
 	Kind() byte
 }
 
@@ -237,6 +240,8 @@ func Decode(input []byte) (Packet, Pubkey, []byte, error) {
 	default:
 		return nil, fromKey, hash, fmt.Errorf("unknown type: %d", ptype)
 	}
+	// Here we use NewStream to allow for additional data after the first
+	// RLP object (forward-compatibility).
 	s := rlp.NewStream(bytes.NewReader(sigdata[1:]), 0)
 	err = s.Decode(req)
 	return req, fromKey, hash, err

@@ -18,6 +18,7 @@ package eth
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 
@@ -41,7 +42,7 @@ var (
 	errPeerNotRegistered = errors.New("peer not registered")
 
 	// errSnapWithoutEth is returned if a peer attempts to connect only on the
-	// snap protocol without advertizing the eth main protocol.
+	// snap protocol without advertising the eth main protocol.
 	errSnapWithoutEth = errors.New("peer connected on snap without compatible eth support")
 )
 
@@ -56,6 +57,7 @@ type peerSet struct {
 
 	lock   sync.RWMutex
 	closed bool
+	quitCh chan struct{} // Quit channel to signal termination
 }
 
 // newPeerSet creates a new peer set to track the active participants.
@@ -64,6 +66,7 @@ func newPeerSet() *peerSet {
 		peers:    make(map[string]*ethPeer),
 		snapWait: make(map[string]chan *snap.Peer),
 		snapPend: make(map[string]*snap.Peer),
+		quitCh:   make(chan struct{}),
 	}
 }
 
@@ -74,7 +77,7 @@ func (ps *peerSet) registerSnapExtension(peer *snap.Peer) error {
 	// Reject the peer if it advertises `snap` without `eth` as `snap` is only a
 	// satellite protocol meaningful with the chain selection of `eth`
 	if !peer.RunningCap(eth.ProtocolName, eth.ProtocolVersions) {
-		return errSnapWithoutEth
+		return fmt.Errorf("%w: have %v", errSnapWithoutEth, peer.Caps())
 	}
 	// Ensure nobody can double connect
 	ps.lock.Lock()
@@ -97,7 +100,7 @@ func (ps *peerSet) registerSnapExtension(peer *snap.Peer) error {
 	return nil
 }
 
-// waitExtensions blocks until all satellite protocols are connected and tracked
+// waitSnapExtension blocks until all satellite protocols are connected and tracked
 // by the peerset.
 func (ps *peerSet) waitSnapExtension(peer *eth.Peer) (*snap.Peer, error) {
 	// If the peer does not support a compatible `snap`, don't wait
@@ -128,7 +131,15 @@ func (ps *peerSet) waitSnapExtension(peer *eth.Peer) (*snap.Peer, error) {
 	ps.snapWait[id] = wait
 	ps.lock.Unlock()
 
-	return <-wait, nil
+	select {
+	case p := <-wait:
+		return p, nil
+	case <-ps.quitCh:
+		ps.lock.Lock()
+		delete(ps.snapWait, id)
+		ps.lock.Unlock()
+		return nil, errPeerSetClosed
+	}
 }
 
 // registerPeer injects a new `eth` peer into the working set, or returns an error
@@ -240,7 +251,7 @@ func (ps *peerSet) peerWithHighestTD() *eth.Peer {
 		bestTd   *big.Int
 	)
 	for _, p := range ps.peers {
-		if _, td := p.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
+		if _, td, _ := p.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
 			bestPeer, bestTd = p.Peer, td
 		}
 	}
@@ -255,6 +266,9 @@ func (ps *peerSet) close() {
 	for _, p := range ps.peers {
 		p.Disconnect(p2p.DiscQuitting)
 	}
+	if !ps.closed {
+		close(ps.quitCh)
+	}
 	ps.closed = true
 }
 
@@ -268,7 +282,7 @@ func (ps *peerSet) WorstPeer() *ethPeer {
 		worstTD   *big.Int
 	)
 	for _, p := range ps.peers {
-		if _, td := p.Head(); worstPeer == nil || td.Cmp(worstTD) < 0 {
+		if _, td, _ := p.Head(); worstPeer == nil || td.Cmp(worstTD) < 0 {
 			worstPeer, worstTD = p, td
 		}
 	}

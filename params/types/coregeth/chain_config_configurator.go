@@ -28,6 +28,9 @@ package coregeth
 
 import (
 	"math/big"
+	"reflect"
+	"runtime"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -58,13 +61,13 @@ func setBig(i *big.Int, u *uint64) *big.Int {
 
 func (c *CoreGethChainConfig) ensureExistingRewardSchedule() {
 	if c.BlockRewardSchedule == nil {
-		c.BlockRewardSchedule = ctypes.Uint64BigMapEncodesHex{}
+		c.BlockRewardSchedule = ctypes.Uint64Uint256MapEncodesHex{}
 	}
 }
 
 func (c *CoreGethChainConfig) ensureExistingDifficultySchedule() {
 	if c.DifficultyBombDelaySchedule == nil {
-		c.DifficultyBombDelaySchedule = ctypes.Uint64BigMapEncodesHex{}
+		c.DifficultyBombDelaySchedule = ctypes.Uint64Uint256MapEncodesHex{}
 	}
 }
 
@@ -136,6 +139,22 @@ func (c *CoreGethChainConfig) GetMaxCodeSize() *uint64 {
 }
 func (c *CoreGethChainConfig) SetMaxCodeSize(n *uint64) error {
 	return internal.GlobalConfigurator().SetMaxCodeSize(n)
+}
+
+func (c *CoreGethChainConfig) GetElasticityMultiplier() uint64 {
+	return internal.GlobalConfigurator().GetElasticityMultiplier()
+}
+
+func (c *CoreGethChainConfig) SetElasticityMultiplier(n uint64) error {
+	return internal.GlobalConfigurator().SetElasticityMultiplier(n)
+}
+
+func (c *CoreGethChainConfig) GetBaseFeeChangeDenominator() uint64 {
+	return internal.GlobalConfigurator().GetBaseFeeChangeDenominator()
+}
+
+func (c *CoreGethChainConfig) SetBaseFeeChangeDenominator(n uint64) error {
+	return internal.GlobalConfigurator().SetBaseFeeChangeDenominator(n)
 }
 
 func (c *CoreGethChainConfig) GetEIP7Transition() *uint64 {
@@ -408,6 +427,15 @@ func (c *CoreGethChainConfig) SetECBP1100Transition(n *uint64) error {
 	return nil
 }
 
+func (c *CoreGethChainConfig) GetECBP1100DeactivateTransition() *uint64 {
+	return bigNewU64(c.ECBP1100DeactivateFBlock)
+}
+
+func (c *CoreGethChainConfig) SetECBP1100DeactivateTransition(n *uint64) error {
+	c.ECBP1100DeactivateFBlock = setBig(c.ECBP1100DeactivateFBlock, n)
+	return nil
+}
+
 func (c *CoreGethChainConfig) GetEIP2315Transition() *uint64 {
 	return bigNewU64(c.EIP2315FBlock)
 }
@@ -498,6 +526,228 @@ func (c *CoreGethChainConfig) SetEIP4399Transition(n *uint64) error {
 	return nil
 }
 
+// EIP3651: Warm COINBASE
+func (c *CoreGethChainConfig) GetEIP3651TransitionTime() *uint64 {
+	return c.EIP3651FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP3651TransitionTime(n *uint64) error {
+	c.EIP3651FTime = n
+	return nil
+}
+
+// GetEIP3855TransitionTime EIP3855: PUSH0 instruction
+func (c *CoreGethChainConfig) GetEIP3855TransitionTime() *uint64 {
+	return c.EIP3855FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP3855TransitionTime(n *uint64) error {
+	c.EIP3855FTime = n
+	return nil
+}
+
+// GetEIP3860TransitionTime EIP3860: Limit and meter initcode
+func (c *CoreGethChainConfig) GetEIP3860TransitionTime() *uint64 {
+	return c.EIP3860FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP3860TransitionTime(n *uint64) error {
+	c.EIP3860FTime = n
+	return nil
+}
+
+// GetEIP4895TransitionTime EIP4895: Beacon chain push withdrawals as operations
+func (c *CoreGethChainConfig) GetEIP4895TransitionTime() *uint64 {
+	return c.EIP4895FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP4895TransitionTime(n *uint64) error {
+	c.EIP4895FTime = n
+	return nil
+}
+
+// GetEIP6049TransitionTime EIP6049: Deprecate SELFDESTRUCT
+func (c *CoreGethChainConfig) GetEIP6049TransitionTime() *uint64 {
+	return c.EIP6049FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP6049TransitionTime(n *uint64) error {
+	c.EIP6049FTime = n
+	return nil
+}
+
+// Shanghai by block
+// EIP3651: Warm COINBASE
+func (c *CoreGethChainConfig) GetEIP3651Transition() *uint64 {
+	return bigNewU64(c.EIP3651FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP3651Transition(n *uint64) error {
+	c.EIP3651FBlock = setBig(c.EIP3651FBlock, n)
+	return nil
+}
+
+// GetEIP3855Transition EIP3855: PUSH0 instruction
+func (c *CoreGethChainConfig) GetEIP3855Transition() *uint64 {
+	return bigNewU64(c.EIP3855FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP3855Transition(n *uint64) error {
+	c.EIP3855FBlock = setBig(c.EIP3855FBlock, n)
+	return nil
+}
+
+// GetEIP3860Transition EIP3860: Limit and meter initcode
+func (c *CoreGethChainConfig) GetEIP3860Transition() *uint64 {
+	return bigNewU64(c.EIP3860FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP3860Transition(n *uint64) error {
+	c.EIP3860FBlock = setBig(c.EIP3860FBlock, n)
+	return nil
+}
+
+// GetEIP4895Transition EIP4895: Beacon chain push withdrawals as operations
+func (c *CoreGethChainConfig) GetEIP4895Transition() *uint64 {
+	return bigNewU64(c.EIP4895FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP4895Transition(n *uint64) error {
+	c.EIP4895FBlock = setBig(c.EIP4895FBlock, n)
+	return nil
+}
+
+// GetEIP6049Transition EIP6049: Deprecate SELFDESTRUCT
+func (c *CoreGethChainConfig) GetEIP6049Transition() *uint64 {
+	return bigNewU64(c.EIP6049FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP6049Transition(n *uint64) error {
+	c.EIP6049FBlock = setBig(c.EIP6049FBlock, n)
+	return nil
+}
+
+// GetEIP4844TransitionTime EIP4844: Shard Blob Transactions
+func (c *CoreGethChainConfig) GetEIP4844TransitionTime() *uint64 {
+	return c.EIP4844FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP4844TransitionTime(n *uint64) error {
+	c.EIP4844FTime = n
+	return nil
+}
+
+// GetEIP7516TransitionTime EIP7516: Blob Base Fee Opcode
+func (c *CoreGethChainConfig) GetEIP7516TransitionTime() *uint64 {
+	return c.EIP7516FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP7516TransitionTime(n *uint64) error {
+	c.EIP7516FTime = n
+	return nil
+}
+
+// GetEIP1153TransitionTime EIP1153: Transient Storage opcodes
+func (c *CoreGethChainConfig) GetEIP1153TransitionTime() *uint64 {
+	return c.EIP1153FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP1153TransitionTime(n *uint64) error {
+	c.EIP1153FTime = n
+	return nil
+}
+
+// GetEIP5656TransitionTime EIP5656: MCOPY - Memory copying instruction
+func (c *CoreGethChainConfig) GetEIP5656TransitionTime() *uint64 {
+	return c.EIP5656FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP5656TransitionTime(n *uint64) error {
+	c.EIP5656FTime = n
+	return nil
+}
+
+// GetEIP6780TransitionTime EIP6780: SELFDESTRUCT only in same transaction
+func (c *CoreGethChainConfig) GetEIP6780TransitionTime() *uint64 {
+	return c.EIP6780FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP6780TransitionTime(n *uint64) error {
+	c.EIP6780FTime = n
+	return nil
+}
+
+// GetEIP6780TransitionTime EIP4788: Beacon block root in the EVM
+func (c *CoreGethChainConfig) GetEIP4788TransitionTime() *uint64 {
+	return c.EIP4788FTime
+}
+
+func (c *CoreGethChainConfig) SetEIP4788TransitionTime(n *uint64) error {
+	c.EIP4788FTime = n
+	return nil
+}
+
+// Cancun by block
+// GetEIP4844Transition EIP4844: Shard Blob Transactions
+func (c *CoreGethChainConfig) GetEIP4844Transition() *uint64 {
+	return bigNewU64(c.EIP4844FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP4844Transition(n *uint64) error {
+	c.EIP4844FBlock = setBig(c.EIP4844FBlock, n)
+	return nil
+}
+
+// GetEIP7516Transition EIP7516: Blob Base Fee Opcode
+func (c *CoreGethChainConfig) GetEIP7516Transition() *uint64 {
+	return bigNewU64(c.EIP7516FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP7516Transition(n *uint64) error {
+	c.EIP7516FBlock = setBig(c.EIP7516FBlock, n)
+	return nil
+}
+
+// GetEIP1153Transition EIP1153: Transient Storage opcodes
+func (c *CoreGethChainConfig) GetEIP1153Transition() *uint64 {
+	return bigNewU64(c.EIP1153FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP1153Transition(n *uint64) error {
+	c.EIP1153FBlock = setBig(c.EIP1153FBlock, n)
+	return nil
+}
+
+// GetEIP5656Transition EIP5656: MCOPY - Memory copying instruction
+func (c *CoreGethChainConfig) GetEIP5656Transition() *uint64 {
+	return bigNewU64(c.EIP5656FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP5656Transition(n *uint64) error {
+	c.EIP5656FBlock = setBig(c.EIP5656FBlock, n)
+	return nil
+}
+
+// GetEIP6780Transition EIP6780: SELFDESTRUCT only in same transaction
+func (c *CoreGethChainConfig) GetEIP6780Transition() *uint64 {
+	return bigNewU64(c.EIP6780FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP6780Transition(n *uint64) error {
+	c.EIP6780FBlock = setBig(c.EIP6780FBlock, n)
+	return nil
+}
+
+// GetEIP6780Transition EIP4788: Beacon block root in the EVM
+func (c *CoreGethChainConfig) GetEIP4788Transition() *uint64 {
+	return bigNewU64(c.EIP4788FBlock)
+}
+
+func (c *CoreGethChainConfig) SetEIP4788Transition(n *uint64) error {
+	c.EIP4788FBlock = setBig(c.EIP4788FBlock, n)
+	return nil
+}
+
 func (c *CoreGethChainConfig) GetMergeVirtualTransition() *uint64 {
 	return bigNewU64(c.MergeNetsplitVBlock)
 }
@@ -507,12 +757,46 @@ func (c *CoreGethChainConfig) SetMergeVirtualTransition(n *uint64) error {
 	return nil
 }
 
+// Verkle Trie
+func (c *CoreGethChainConfig) GetVerkleTransitionTime() *uint64 {
+	return c.VerkleFTime
+}
+
+func (c *CoreGethChainConfig) SetVerkleTransitionTime(n *uint64) error {
+	c.VerkleFTime = n
+	return nil
+}
+
+func (c *CoreGethChainConfig) GetVerkleTransition() *uint64 {
+	return bigNewU64(c.VerkleFBlock)
+}
+
+func (c *CoreGethChainConfig) SetVerkleTransition(n *uint64) error {
+	c.VerkleFBlock = setBig(c.VerkleFBlock, n)
+	return nil
+}
+
 func (c *CoreGethChainConfig) IsEnabled(fn func() *uint64, n *big.Int) bool {
 	f := fn()
 	if f == nil || n == nil {
 		return false
 	}
+	fnName := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+	if strings.Contains(fnName, "ECBP1100Transition") {
+		deactivateTransition := c.GetECBP1100DeactivateTransition()
+		if deactivateTransition != nil {
+			return big.NewInt(int64(*deactivateTransition)).Cmp(n) > 0 && big.NewInt(int64(*f)).Cmp(n) <= 0
+		}
+	}
 	return big.NewInt(int64(*f)).Cmp(n) <= 0
+}
+
+func (c *CoreGethChainConfig) IsEnabledByTime(fn func() *uint64, n *uint64) bool {
+	f := fn()
+	if f == nil || n == nil {
+		return false
+	}
+	return *f <= *n
 }
 
 func (c *CoreGethChainConfig) GetForkCanonHash(n uint64) common.Hash {
@@ -572,12 +856,30 @@ func (c *CoreGethChainConfig) MustSetConsensusEngineType(t ctypes.ConsensusEngin
 	}
 }
 
+func (c *CoreGethChainConfig) GetIsDevMode() bool {
+	return c.IsDevMode
+}
+
+func (c *CoreGethChainConfig) SetDevMode(devMode bool) error {
+	c.IsDevMode = devMode
+	return nil
+}
+
 func (c *CoreGethChainConfig) GetEthashTerminalTotalDifficulty() *big.Int {
 	return c.TerminalTotalDifficulty
 }
 
 func (c *CoreGethChainConfig) SetEthashTerminalTotalDifficulty(n *big.Int) error {
 	c.TerminalTotalDifficulty = n
+	return nil
+}
+
+func (c *CoreGethChainConfig) GetEthashTerminalTotalDifficultyPassed() bool {
+	return c.TerminalTotalDifficultyPassed
+}
+
+func (c *CoreGethChainConfig) SetEthashTerminalTotalDifficultyPassed(t bool) error {
+	c.TerminalTotalDifficultyPassed = t
 	return nil
 }
 
@@ -1002,25 +1304,47 @@ func (c *CoreGethChainConfig) GetEthashEIP5133Transition() *uint64 {
 	if c.GetConsensusEngineType() != ctypes.ConsensusEngineT_Ethash {
 		return nil
 	}
-	return bigNewU64(c.EIP5133FBlock)
+	if c.eip5133Inferred {
+		return bigNewU64(c.EIP5133FBlock)
+	}
+
+	var diffN *uint64
+	defer func() {
+		c.EIP5133FBlock = setBig(c.EIP5133FBlock, diffN)
+		c.eip5133Inferred = true
+	}()
+
+	// Get block number (key) from map where EIP5133 criteria is met.
+	diffN = ctypes.MapMeetsSpecification(c.DifficultyBombDelaySchedule, nil, vars.EIP5133DifficultyBombDelay, nil)
+	return diffN
 }
 
 func (c *CoreGethChainConfig) SetEthashEIP5133Transition(n *uint64) error {
 	if c.Ethash == nil {
 		return ctypes.ErrUnsupportedConfigFatal
 	}
+
 	c.EIP5133FBlock = setBig(c.EIP5133FBlock, n)
+	c.eip5133Inferred = true
+
+	if n == nil {
+		return nil
+	}
+
+	c.ensureExistingDifficultySchedule()
+	c.DifficultyBombDelaySchedule.SetValueTotalForHeight(n, vars.EIP5133DifficultyBombDelay)
+
 	return nil
 }
 
-func (c *CoreGethChainConfig) GetEthashDifficultyBombDelaySchedule() ctypes.Uint64BigMapEncodesHex {
+func (c *CoreGethChainConfig) GetEthashDifficultyBombDelaySchedule() ctypes.Uint64Uint256MapEncodesHex {
 	if c.GetConsensusEngineType() != ctypes.ConsensusEngineT_Ethash {
 		return nil
 	}
 	return c.DifficultyBombDelaySchedule
 }
 
-func (c *CoreGethChainConfig) SetEthashDifficultyBombDelaySchedule(m ctypes.Uint64BigMapEncodesHex) error {
+func (c *CoreGethChainConfig) SetEthashDifficultyBombDelaySchedule(m ctypes.Uint64Uint256MapEncodesHex) error {
 	if c.Ethash == nil {
 		return ctypes.ErrUnsupportedConfigFatal
 	}
@@ -1028,14 +1352,14 @@ func (c *CoreGethChainConfig) SetEthashDifficultyBombDelaySchedule(m ctypes.Uint
 	return nil
 }
 
-func (c *CoreGethChainConfig) GetEthashBlockRewardSchedule() ctypes.Uint64BigMapEncodesHex {
+func (c *CoreGethChainConfig) GetEthashBlockRewardSchedule() ctypes.Uint64Uint256MapEncodesHex {
 	if c.GetConsensusEngineType() != ctypes.ConsensusEngineT_Ethash {
 		return nil
 	}
 	return c.BlockRewardSchedule
 }
 
-func (c *CoreGethChainConfig) SetEthashBlockRewardSchedule(m ctypes.Uint64BigMapEncodesHex) error {
+func (c *CoreGethChainConfig) SetEthashBlockRewardSchedule(m ctypes.Uint64Uint256MapEncodesHex) error {
 	if c.Ethash == nil {
 		return ctypes.ErrUnsupportedConfigFatal
 	}

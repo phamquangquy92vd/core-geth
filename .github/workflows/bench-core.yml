@@ -12,9 +12,9 @@ jobs:
     steps:
       - name: Set up Go 1.x
         id: go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v5
         with:
-          go-version: ^1.16
+          go-version: '1.21'
 
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
@@ -36,15 +36,15 @@ jobs:
     steps:
       - name: Set up Go 1.x
         id: go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v5
         with:
-          go-version: ^1.16
+          go-version: '1.21'
 
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
         with:
           repository: 'ethereum/go-ethereum'
-          ref: 'v1.9.25'
+          ref: 'v1.10.26'
 
       - name: Benchmark ethereum/go-ethereum
         id: bench
@@ -64,9 +64,9 @@ jobs:
     steps:
       - name: Set up Go 1.x
         id: go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v5
         with:
-          go-version: ^1.16
+          go-version: '1.21'
 
       - name: Check out code into the Go module directory
         uses: actions/checkout@v2
@@ -87,8 +87,8 @@ jobs:
 
       - name: "Analyze Results [COMPRESSED]"
         run: |
-          benchstat --geomean go-ethereum.txt core-geth.txt
+          benchstat go-ethereum.txt core-geth.txt
 
       - name: "Analyze Results [RAW DELTA]"
         run: |
-          benchstat --geomean --delta-test=none go-ethereum.txt core-geth.txt
+          benchstat go-ethereum.txt core-geth.txt
